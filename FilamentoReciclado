@@ -1,0 +1,179 @@
+#define Bi 3950           // B factor
+#define RESISTOR 200000   // resistencia del resistor, 200 kOhm
+#define TERMISTOR 100000  // resistencia nominal del termistor, 100 kOhm
+#define NOMINAL 25        // temperatura nominal
+#define sensor A1
+#include <Wire.h> 
+#include <LiquidCrystal_I2C.h>
+#define dirPin 2
+#define stepPin 3
+int pwmPin = 9;
+int t_sensor;
+unsigned long previousMillis = 0;
+int integral = 0;
+//PID constants
+//////////////////////////////////////////////////////////
+int kp = 110;   int ki = 65;   int kd = 85;
+//////////////////////////////////////////////////////////
+
+int PID_p = 0;    int PID_i = 0;    int PID_d = 0;
+int set_temperature = 213;
+float last_kp = 0;
+float last_ki = 0;
+float last_kd = 0;
+float PID_error = 0;
+float previous_error = 0;
+float elapsedTime, Time, timePrev;
+float PID_value = 0;
+int PID_values_fixed =0;
+int max_PWM = 255;
+LiquidCrystal_I2C lcd(0x27,16,2);
+bool tempState;
+void setup(){
+  Serial.begin(9600);
+  pinMode(sensor, INPUT);
+  pinMode(pwmPin, OUTPUT);
+  pinMode(stepPin, OUTPUT);
+  pinMode(dirPin, OUTPUT);
+    // Initialize the LCD
+  lcd.init();
+  //Encender la luz de fondo.
+  lcd.backlight();
+  Time = millis();
+  tempState = false;
+}
+
+void loop() {
+    int temp = getTemperature();
+     //Next we calculate the error between the setpoint and the real 
+  if(temp !=-273 && tempState ){
+  PID_error = set_temperature - temp  ;
+  //Calculate the P value
+  PID_p = 0.01*kp * PID_error;
+  //Calculate the I value in a range on +-6
+  PID_i = 0.01*PID_i + (ki * PID_error);
+  
+  
+  //For derivative we need real time to calculate speed change rate
+  timePrev = Time;                            // the previous time is stored before the actual time read
+  Time = millis();                            // actual time read
+  elapsedTime = (Time - timePrev) / 1000; 
+  //Now we can calculate the D calue
+  PID_d = 0.01*kd*((PID_error - previous_error)/elapsedTime);
+  //Final total PID value is the sum of P + I + D
+  PID_value = PID_p + PID_i + PID_d;
+
+  
+  //We define PWM range between 0 and 255
+  if(PID_value < 0){
+    PID_value = 0;
+  }
+  if(PID_value > max_PWM){
+    PID_value = max_PWM;
+  }
+  
+  //Now we can write the PWM signal to the mosfet on digital pin D5
+  analogWrite(pwmPin,PID_value);
+  previous_error = PID_error;     //Remember to store the previous error for next loop.
+  }
+  else{
+    analogWrite(pwmPin,0);
+    }
+    Serial.print("Temp: ");
+    Serial.print(temp);
+    Serial.print("   PWM: ");
+    Serial.println(PID_value);
+    lcd.clear();
+    lcd.print("Temp actual es:");
+    lcd.setCursor(0, 1);
+    lcd.print("      ");
+    lcd.print(temp);
+  delay(1000); //Refresh rate + delay of LCD print    
+if (Serial.available() > 0) {
+  String receivedData = Serial.readStringUntil('\n');
+  char* token;
+  char* str;
+  Serial.println("Recibido:");
+  Serial.println(receivedData);
+
+  // Convert the String object to a character array
+  str = strdup(receivedData.c_str());
+
+  // Get the first token
+  token = strtok(str, ",");
+
+  // Variables to store the data
+  String variable1;
+  int variable2;
+
+  // Iterate through the remaining tokens
+  int tokenCount = 1;  // Token counter
+  while (token != NULL) {
+    // Assign each token to the corresponding variable based on its position
+    if (tokenCount == 1) {
+      variable1 = String(token);
+    } else if (tokenCount == 2) {
+      variable2 = atoi(token);  // Convert the token to an integer
+    }
+
+    // Get the next token
+    token = strtok(NULL, ",");
+    tokenCount++;
+  }
+
+  Serial.print("Variable 1: ");
+  Serial.println(variable1);
+  Serial.print("Variable 2: ");
+  Serial.println(variable2);
+
+  // Free memory
+  free(str);
+
+  if (variable1 == "cw" || variable1 == "CW") {
+    // Set the spinning direction clockwise:
+    digitalWrite(dirPin, HIGH);
+
+    // Spin the stepper motor variable2 number of steps:
+    for (int i = 0; i < variable2; i++) {
+      // These four lines result in 1 step:
+      digitalWrite(stepPin, HIGH);
+      delayMicroseconds(500);
+      digitalWrite(stepPin, LOW);
+      delayMicroseconds(500);
+    }
+  } else if (variable1 == "ccw" || variable1 == "CCW") {
+    digitalWrite(dirPin, LOW);
+
+    // Spin the stepper motor variable2 number of steps:
+    for (int i = 0; i < variable2; i++) {
+      // These four lines result in 1 step:
+      digitalWrite(stepPin, HIGH);
+      delayMicroseconds(500);
+      digitalWrite(stepPin, LOW);
+      delayMicroseconds(500);
+    }
+  } else if (variable1 == "button") {
+    // Toggle the value of tempState
+    tempState = !tempState;
+    Serial.print("Temp State toggled: ");
+    Serial.println(tempState);
+  }
+}
+}
+
+int getTemperature() {
+  int adc;
+  adc = analogRead(sensor);
+  float tr = 1023.0 / adc ;
+  tr = RESISTOR / tr;
+  float steinhart;
+  steinhart = tr / TERMISTOR;
+  steinhart = log(steinhart);
+  steinhart /= Bi;
+  steinhart += 1.0 / (NOMINAL + 273.15);
+  steinhart = 1.0 / steinhart;
+  steinhart -= 273.15;
+  t_sensor = steinhart;
+  Serial.println(adc);
+  return round(t_sensor);
+}
